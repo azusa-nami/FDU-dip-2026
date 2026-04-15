@@ -4,5 +4,5 @@ scikit-image
 tensorboardX
 pyyaml
 h5py
-opencv-python
+opencv-python-headless
 pillow
