@@ -117,7 +117,7 @@ def main() -> None:
         PROCESSED_ROOT / "postcard",
     )
     solid_blended, solid_transmission = prepare_sir2_dataset(
-        RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "objectsDataset",
+        RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "SolidObjectDataset",
         PROCESSED_ROOT / "objects",
     )
     wild_blended, wild_transmission = prepare_sir2_dataset(
