@@ -121,7 +121,7 @@ def main() -> None:
         PROCESSED_ROOT / "objects",
     )
     wild_blended, wild_transmission = prepare_sir2_dataset(
-        RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "wildDataset",
+        RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "WildSceneDataset",
         PROCESSED_ROOT / "wild",
     )
     sir2_blended, sir2_transmission = merge_sir2(
