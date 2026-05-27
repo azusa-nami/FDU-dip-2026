@@ -1,79 +1,158 @@
-# ERRNet
+# ERRNet DIP26 Guide
 
-The implementation of CVPR 2019 paper "[Single Image Reflection Removal Exploiting Misaligned Training Data and Network Enhancements](https://arxiv.org/abs/1904.00637)"
+## 1. Clone and Download
 
-*News* (19/09/2019): Fix the broken link; our pretrained model and collected unaligned dataset are now available at [OneDrive](https://1drv.ms/f/s!AqddfvhavTRih3n3W0P29cxVIlfM)   
+### 1.1 Clone the repository
 
-## Highlights
-
-* Our network can extract the background image layer devoid of reflection artifacts, as in the example:
-
-<img src="imgs/animation2.gif" height="140px"/> <img src="imgs/animation1.gif" height="140px"/> 
-
-* We captured a new dataset containing 450 unaligned image pairs that are considerably easier to collect.
-Image samples from our unaligned dataset are shown below:
-
-<img src="imgs/unaligned1.gif" height="140px"/> <img src="imgs/datacollection_ours.jpg" height="140px"/>  <img src="imgs/unaligned2.gif" height="140px"/> 
-
-* We introduce a simple but powerful alignment-invariant loss function to facilitate exploiting misaligned real-world training data. Finetuning on unaligned image pairs with our loss leads to sharp and reflection-free results, in contrast to the blurry ones when using a conventional pixel-wise loss (L1, L2, e.t.c.). The resulting images finetuned by different losses are shown below: (Left: Pixel-wise loss; Right: Ours)
-
-<img src="imgs/unaligned_pixel.gif" height="140px"/> <img src="imgs/unaligned_ours.gif" height="140px"/>   
-
-
-## Prerequisites
-* Python >=3.5, PyTorch >= 0.4.1
-* Requirements: opencv-python, tensorboardX, visdom
-* Platforms: Ubuntu 16.04, cuda-8.0
-
-
-## Quick Start
-### 1. Preparing your training/testing datasets
-
-#### Training dataset
-* 7,643 cropped images with size 224 × 224 from
-  [Pascal VOC dataset](http://host.robots.ox.ac.uk/pascal/VOC/) (image ids are provided in VOC2012_224_train_png.txt, you should crop the center region with size 224 x 224 to reproduce our result). 
-
-* 90 real-world training images from [Berkeley real dataset](https://github.com/ceciliavision/perceptual-reflection-removal) 
-
-#### Testing dataset
-* 100 synthetic testing images from [CEILNet dataset](https://github.com/fqnchina/CEILNet) (testdata_reflection_synthetic_table2) 
-* 20 real testing images from [Berkeley real dataset](https://github.com/ceciliavision/perceptual-reflection-removal).  
-* Three sub-datasets, namely ‘Objects’, ‘Postcard’, ‘Wild’ from [SIR^2 dataset](https://sir2data.github.io/)
-
-Once the data are downloaded, you must organize the dataset according to our code implementation (see the source code of datasets.CEILDataset, e.t.c.)
-
-
-### 2. Playing with aligned data
-
-#### Testing
- * Download our pretrained model from [OneDrive](https://1drv.ms/f/s!AqddfvhavTRih3n3W0P29cxVIlfM) and move ```errnet_060_00463920.pt``` to ```checkpoints/errnet/```. 
- * Evaluate the model performance by ```python test_errnet.py --name errnet -r --icnn_path checkpoints/errnet/errnet_060_00463920.pt --hyper```
-
-#### Training
-* Reproduce our results by ```python train_errnet.py --name errnet --hyper``` 
-* Check ```options/errnet/train_options.py``` to see more training options. 
-
-### 3. Playing with unaligned data
-* Reproduce our finetuned model by ```python train_errnet_unaligned.py --name errnet_unaligned_ft --hyper -r --icnn_path checkpoints/errnet/errnet_060_00463920.pt --unaligned_loss vgg```
-
-## Citation
-
-If you find our code helpful in your research or work please cite our paper.
-
-```bibtex
- @inproceedings{wei2019single,
-   title={Single Image Reflection Removal Exploiting Misaligned Training Data and Network Enhancements},
-   author={Wei, Kaixuan and Yang, Jiaolong and Fu, Ying and David, Wipf and Huang, Hua},
-   booktitle={IEEE Conference on Computer Vision and Pattern Recognition},
-   year={2019},
- }
+```bash
+git clone https://github.com/innerway-xq/ERRNet
+cd ERRNet
+git checkout dip26
 ```
 
-## Contact
-If you find any problem, please feel free to contact me (kaixuan.wei at kaust.edu.sa).
-A brief self-introduction is required, if you would like to get an in-depth help from me. 
+### 1.2 Setup the environment
 
-## Acknowledgments
-* Our code architecture is inspired by [CycleGAN](https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix) and [EDSR](https://github.com/thstkdgus35/EDSR-PyTorch). 
+```bash
+conda create -n errnet python=3.10 -y
+conda activate errnet
+pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+pip install -U pip wheel "setuptools<82"
+pip install visdom==0.2.4 --no-build-isolation
+```
 
-* Special thanks to [@fqnchina](https://github.com/fqnchina) and [@ceciliavision](https://github.com/ceciliavision) for some discussions of this work. 
+Notes:
+- Install the correct `torch`/`torchvision` version for your machine. Use a CUDA build if you have a GPU, and a CPU build otherwise. (Refer to https://pytorch.org/get-started/previous-versions/)
+
+### 1.3 Download files
+
+Download through [BaiduYun](https://pan.baidu.com/s/1MWb4eT18ySjogKVlcfPozg?pwd=egv2) or [GoogleDrive](https://drive.google.com/drive/folders/1_tN6JDlAmKZTgaqniQep1YJXmbFwGav7?usp=drive_link), then unzip and place files in ERRNet like this: 
+```text
+ERRNet/
+  checkpoints/
+    errnet/
+      errnet_060_00463920.pt
+  datasets/
+    raw_data/
+      VOCdevkit/
+      CEILNet/
+      real89/
+      robustsirr_test_dataset/
+      Dataset/
+```
+
+## 2. Prepare the Training and Testing Data
+
+
+Run:
+
+```bash
+python datasets/prepare_test_data.py
+python datasets/prepare_train_data.py
+```
+
+
+## 3. Testing
+
+The testing script is `test_errnet.py`.
+
+### 3.1 Benchmark testing
+
+Supported benchmark names:
+
+- `ceilnet_table2`
+- `real20`
+- `postcard`
+- `objects`
+- `wild`
+- `sir2_withgt`
+
+```bash
+# gpu
+python test_errnet.py --name errnet --dataset [dataset] -r --icnn_path checkpoints/errnet/errnet_060_00463920.pt --hyper
+# cpu
+python test_errnet.py --name errnet_cpu --dataset [dataset] -r --gpu_ids -1 --icnn_path checkpoints/errnet/errnet_060_00463920.pt --hyper
+```
+
+
+### 3.2 Test on your own images
+
+If you only want to run the model on your own reflection images, ground truth is not required. Put your images in any folder, for example:
+
+```text
+datasets/raw_data/my_test_images/
+  img1.jpg
+  img2.jpg
+```
+
+Run:
+```bash
+python test_errnet.py --name errnet --dataset custom --input_dir ./datasets/raw_data/my_test_images -r --icnn_path checkpoints/errnet/errnet_060_00463920.pt --hyper
+```
+
+Each image will have its own subfolder. You will usually see:
+
+- `m_input.png`: the input image
+- `errnet.png` or `errnet_cpu.png`: the model output
+
+## 4. Training
+
+There are two training stages:
+
+- Aligned-data training: `train_errnet.py`
+- Unaligned-data finetuning: `train_errnet_unaligned.py`
+
+### 4.1 Train the aligned baseline
+
+```bash
+# gpu
+python train_errnet.py --name errnet --hyper
+# cpu
+python train_errnet.py --name errnet_cpu --hyper --gpu_ids -1
+```
+
+### 4.2 Finetune on unaligned data
+
+
+#### GPU version
+
+```bash
+# gpu
+python train_errnet_unaligned.py --name errnet_unaligned_ft --hyper -r --icnn_path checkpoints/errnet/errnet_060_00463920.pt --unaligned_loss vgg
+# cpu
+python train_errnet_unaligned.py --name errnet_unaligned_ft_cpu --hyper -r --gpu_ids -1 --icnn_path checkpoints/errnet/errnet_060_00463920.pt --unaligned_loss vgg
+```
+
+
+## 5. Baseline Result
+
+> checkpoints/errnet/errnet_060_00463920.pt
+
+| Dataset | PSNR | SSIM | NCC | LMSE |
+| --- | --- | --- | --- | --- |
+| CEILNet| 27.88 | 0.9407 | 0.9808 | 0.0048 |
+| real20 | 23.55 | 0.8285 | 0.8877 | 0.0201 |
+| objects | 24.85 | 0.8980 | 0.9817 | 0.0029|
+| postcard | 22.07 | 0.8773 | 0.9463 | 0.0044 |
+| wild | 25.18 | 0.886 | 0.9359 | 0.0083|
+
+| Dataset | PSNR | SSIM | NCC | LMSE |
+| --- | --- | --- | --- | --- |
+| CEILNet | 27.22 | 0.9383 | 0.9754 | 0.0047 | down
+| real20 | 24.81 | 0.8439 | 0.9141 | 0.0168 | up
+| objects | 24.86 | 0.8985 | 0.9799 | 0.0034 | draw
+| postcard | 20.78 | 0.8757 | 0.9233 | 0.0044 | down
+| wild | 25.76 | 0.9070 | 0.9497 | 0.0054 | up
+
+divov3+data transform                    
+ceilnet_table2: LMSE: 0.0125 | NCC: 0.8818 | PSNR: 18.6178 | SSIM: 0.8318 |                  
+real20: LMSE: 0.0173 | NCC: 0.9111 | PSNR: 24.3347 | SSIM: 0.8425 |                   
+postcard: LMSE: 0.0031 | NCC: 0.9653 | PSNR: 24.7796 | SSIM: 0.9103 |                   
+objects: LMSE: 0.0029 | NCC: 0.9844 | PSNR: 25.7775 | SSIM: 0.9119 |              
+wild: LMSE: 0.0055 | NCC: 0.9500 | PSNR: 25.7647 | SSIM: 0.9069 | 
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --nproc_per_node=4 test_errnet.py \
+--dataset all \
+--name errnet_dinov3_scaled \
+-r --icnn_path checkpoints/errnet_dinov3_scaled/errnet_latest.pt \
+--hyper --feature_model_path /oldhome/zengyuqi/model/dinov3
