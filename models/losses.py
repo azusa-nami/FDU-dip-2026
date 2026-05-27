@@ -8,6 +8,7 @@ from torch import autograd
 import torchvision.models as models
 import util.util as util
 from models.vgg import Vgg19
+from models.dinov3 import DINOv3Features
 from torch.autograd import Function
 from models.CX import CX_loss
 
@@ -73,7 +74,7 @@ class VGGLoss(nn.Module):
         self.weights = weights or [1.0/2.6, 1.0/4.8, 1.0/3.7, 1.0/5.6, 10/1.5]
         self.indices = indices or [2, 7, 12, 21, 30]
         device = next(self.vgg.parameters()).device
-        if normalize:
+        if normalize and not getattr(self.vgg, "handles_normalization", False):
             self.normalize = MeanShift([0.485, 0.456, 0.406], [0.229, 0.224, 0.225], norm=True).to(device)
         else:
             self.normalize = None
@@ -98,8 +99,9 @@ class CXLoss(VGGLoss):
         self.criterions = criterions or [CX_loss] * (len(weights))
     
     def forward(self, x, y):
-        x = self.normalize(x)
-        y = self.normalize(y)
+        if self.normalize is not None:
+            x = self.normalize(x)
+            y = self.normalize(y)
         x_vgg, y_vgg = self.vgg(x, self.indices), self.vgg(y, self.indices)
         loss = 0
         for i in range(len(x_vgg)):

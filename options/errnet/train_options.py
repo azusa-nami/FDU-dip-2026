@@ -21,6 +21,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--high_sigma', type=float, default=5, help='max sigma in synthetic dataset')
         self.parser.add_argument('--low_gamma', type=float, default=1.3, help='max gamma in synthetic dataset')
         self.parser.add_argument('--high_gamma', type=float, default=1.3, help='max gamma in synthetic dataset')
+        self.parser.add_argument('--synthesis', type=str, default='mixed', choices=['mixed', 'reflection2', 'advanced', 'legacy'], help='reflection synthesis used for synthetic training data')
         
         # data augmentation
         self.parser.add_argument('--batchSize', '-b', type=int, default=1, help='input batch size')
@@ -34,8 +35,8 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--gan_type', type=str, default='rasgan', help='gan/sgan : Vanilla GAN; rasgan : relativistic gan')
         
         # loss weight
-        self.parser.add_argument('--unaligned_loss', type=str, default='vgg', help='learning rate policy: vgg|mse|ctx|ctx_vgg')
-        self.parser.add_argument('--vgg_layer', type=int, default=31, help='vgg layer of unaligned loss')
+        self.parser.add_argument('--unaligned_loss', type=str, default='vgg', help='unaligned loss: vgg|mse|ctx|ctx_vgg')
+        self.parser.add_argument('--vgg_layer', type=int, default=31, help='VGG19 layer for the unaligned vgg loss')
         
         self.parser.add_argument('--lambda_gan', type=float, default=0.01, help='weight for gan loss')
         self.parser.add_argument('--lambda_vgg', type=float, default=0.1, help='weight for vgg loss')

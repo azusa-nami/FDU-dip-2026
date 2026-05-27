@@ -11,15 +11,14 @@ opt = TrainOptions().parse()
 
 cudnn.benchmark = True
 
-# processed datasets prepared by datasets/prepare_train_data.py and datasets/prepare_test_data.py
-datadir = './datasets/processed_data'
+datadir = join(opt.data_root, 'train')
 raw_datadir = './datasets/raw_data'
 
-datadir_syn = join(datadir, 'VOCdevkit/VOC2012/PNGImages')
-datadir_real = join(datadir, 'real_train')
+datadir_syn = join(datadir, 'synthetic_voc')
+datadir_real = join(datadir, 'real89')
 datadir_unaligned = join(raw_datadir, 'Dataset/DSLR/unaligned_train250')
 
-train_dataset = datasets.CEILDataset(datadir_syn, read_fns('VOC2012_224_train_png.txt'), size=opt.max_dataset_size)
+train_dataset = datasets.CEILDataset(datadir_syn, read_fns('VOC2012_224_train_png.txt'), size=opt.max_dataset_size, synthesis=opt.synthesis)
 train_dataset_real = datasets.CEILTestDataset(datadir_real, enable_transforms=True)
 
 train_dataset_unaligned = datasets.CEILTestDataset(datadir_unaligned, enable_transforms=True, flag={'unaligned':True}, size=None)
@@ -41,6 +40,12 @@ def set_learning_rate(lr):
 
 set_learning_rate(1e-4)
 while engine.epoch < 80:
+    if opt.synthesis == 'mixed':
+        if engine.epoch < 0.7 * 80:
+            train_dataset.set_synthesis_mix(0.8, 0.2)
+        else:
+            train_dataset.set_synthesis_mix(0.6, 0.4)
+
     if engine.epoch == 65:
         set_learning_rate(5e-5)
     if engine.epoch == 70:

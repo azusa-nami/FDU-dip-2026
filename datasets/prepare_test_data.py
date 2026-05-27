@@ -4,7 +4,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = ROOT / "datasets" / "raw_data"
-PROCESSED_ROOT = ROOT / "datasets" / "processed_data"
+DATA_ROOT = ROOT / "datasets" / "data"
 
 
 def reset_dir(path: Path) -> None:
@@ -64,7 +64,7 @@ def prepare_sir2_dataset(src_dir: Path, dst_dir: Path) -> tuple[int, int]:
 
 def prepare_ceilnet_table2() -> tuple[int, int]:
     src_dir = RAW_ROOT / "CEILNet" / "testdata_reflection_synthetic_table2"
-    dst_dir = PROCESSED_ROOT / "testdata_CEILNET_table2"
+    dst_dir = DATA_ROOT / "test" / "ceilnet_table2"
     blended_dir = dst_dir / "blended"
     transmission_dir = dst_dir / "transmission_layer"
 
@@ -105,47 +105,47 @@ def merge_sir2(datasets: list[Path], dst_dir: Path) -> tuple[int, int]:
 
 
 def main() -> None:
-    PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
     ceil_blended, ceil_transmission = prepare_ceilnet_table2()
     real20_blended, real20_transmission = copy_paired_dataset(
         RAW_ROOT / "robustsirr_test_dataset" / "real20",
-        PROCESSED_ROOT / "real20",
+        DATA_ROOT / "test" / "real20",
     )
     postcard_blended, postcard_transmission = prepare_sir2_dataset(
         RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "PostcardDataset",
-        PROCESSED_ROOT / "postcard",
+        DATA_ROOT / "test" / "postcard",
     )
     solid_blended, solid_transmission = prepare_sir2_dataset(
         RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "SolidObjectDataset",
-        PROCESSED_ROOT / "objects",
+        DATA_ROOT / "test" / "objects",
     )
     wild_blended, wild_transmission = prepare_sir2_dataset(
         RAW_ROOT / "robustsirr_test_dataset" / "SIR2" / "WildSceneDataset",
-        PROCESSED_ROOT / "wild",
+        DATA_ROOT / "test" / "wild",
     )
     sir2_blended, sir2_transmission = merge_sir2(
         [
-            PROCESSED_ROOT / "postcard",
-            PROCESSED_ROOT / "objects",
-            PROCESSED_ROOT / "wild",
+            DATA_ROOT / "test" / "postcard",
+            DATA_ROOT / "test" / "objects",
+            DATA_ROOT / "test" / "wild",
         ],
-        PROCESSED_ROOT / "sir2_withgt",
+        DATA_ROOT / "test" / "sir2_withgt",
     )
 
     print("Done.")
-    print(f"testdata_CEILNET_table2/blended: {ceil_blended}")
-    print(f"testdata_CEILNET_table2/transmission_layer: {ceil_transmission}")
-    print(f"real20/blended: {real20_blended}")
-    print(f"real20/transmission_layer: {real20_transmission}")
-    print(f"postcard/blended: {postcard_blended}")
-    print(f"postcard/transmission_layer: {postcard_transmission}")
-    print(f"objects/blended: {solid_blended}")
-    print(f"objects/transmission_layer: {solid_transmission}")
-    print(f"wild/blended: {wild_blended}")
-    print(f"wild/transmission_layer: {wild_transmission}")
-    print(f"sir2_withgt/blended: {sir2_blended}")
-    print(f"sir2_withgt/transmission_layer: {sir2_transmission}")
+    print(f"test/ceilnet_table2/blended: {ceil_blended}")
+    print(f"test/ceilnet_table2/transmission_layer: {ceil_transmission}")
+    print(f"test/real20/blended: {real20_blended}")
+    print(f"test/real20/transmission_layer: {real20_transmission}")
+    print(f"test/postcard/blended: {postcard_blended}")
+    print(f"test/postcard/transmission_layer: {postcard_transmission}")
+    print(f"test/objects/blended: {solid_blended}")
+    print(f"test/objects/transmission_layer: {solid_transmission}")
+    print(f"test/wild/blended: {wild_blended}")
+    print(f"test/wild/transmission_layer: {wild_transmission}")
+    print(f"test/sir2_withgt/blended: {sir2_blended}")
+    print(f"test/sir2_withgt/transmission_layer: {sir2_transmission}")
 
 
 if __name__ == "__main__":

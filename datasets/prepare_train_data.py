@@ -6,7 +6,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = ROOT / "datasets" / "raw_data"
-PROCESSED_ROOT = ROOT / "datasets" / "processed_data"
+DATA_ROOT = ROOT / "datasets" / "data"
 CROP_SIZE = 224
 
 
@@ -28,7 +28,7 @@ def center_crop_224(img: Image.Image) -> Image.Image:
 def prepare_voc() -> int:
     list_path = ROOT / "VOC2012_224_train_png.txt"
     src_dir = RAW_ROOT / "VOCdevkit" / "VOC2012" / "JPEGImages"
-    dst_dir = PROCESSED_ROOT / "VOCdevkit" / "VOC2012" / "PNGImages"
+    dst_dir = DATA_ROOT / "train" / "synthetic_voc"
 
     if not list_path.exists():
         raise FileNotFoundError(f"Missing list file: {list_path}")
@@ -53,7 +53,7 @@ def prepare_voc() -> int:
 
 def prepare_real_train() -> tuple[int, int]:
     src_dir = RAW_ROOT / "real89"
-    dst_dir = PROCESSED_ROOT / "real_train"
+    dst_dir = DATA_ROOT / "train" / "real89"
 
     if not src_dir.exists():
         raise FileNotFoundError(f"Missing raw Berkeley real dataset: {src_dir}")
@@ -70,17 +70,16 @@ def prepare_real_train() -> tuple[int, int]:
 
 
 def main() -> None:
-    PROCESSED_ROOT.mkdir(parents=True, exist_ok=True)
+    DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
     voc_count = prepare_voc()
     real_blended, real_transmission = prepare_real_train()
 
     print("\nDone.")
-    print(f"VOC PNGImages: {voc_count}")
-    print(f"real_train/blended: {real_blended}")
-    print(f"real_train/transmission_layer: {real_transmission}")
+    print(f"train/synthetic_voc: {voc_count}")
+    print(f"train/real89/blended: {real_blended}")
+    print(f"train/real89/transmission_layer: {real_transmission}")
 
 
 if __name__ == "__main__":
     main()
-

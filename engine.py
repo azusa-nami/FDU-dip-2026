@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 import util.util as util
 import models
 import time
@@ -6,6 +7,27 @@ import os
 import sys
 from os.path import join
 from util.visualizer import Visualizer
+from util.distributed import barrier, is_main_process
+
+
+def _reduce_average_meters(avg_meters, opt):
+    if not getattr(opt, "distributed", False):
+        return avg_meters
+
+    gathered_keys = [None for _ in range(opt.world_size)]
+    dist.all_gather_object(gathered_keys, list(avg_meters.keys()))
+    keys = sorted({key for rank_keys in gathered_keys for key in rank_keys})
+
+    reduced = util.AverageMeters()
+    for key in keys:
+        value = avg_meters.dic.get(key, 0.0)
+        count = avg_meters.total_num.get(key, 0)
+        stats = torch.tensor([float(value), float(count)], dtype=torch.float64, device=opt.device)
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        if stats[1].item() > 0:
+            reduced.dic[key] = stats[0].item()
+            reduced.total_num[key] = int(stats[1].item())
+    return reduced
 
 
 class Engine(object):
@@ -20,7 +42,7 @@ class Engine(object):
 
     def __setup(self):
         self.basedir = join('checkpoints', self.opt.name)
-        if not os.path.exists(self.basedir):
+        if is_main_process(self.opt) and not os.path.exists(self.basedir):
             os.mkdir(self.basedir)
         
         opt = self.opt
@@ -28,14 +50,18 @@ class Engine(object):
         """Model"""
         self.model = models.__dict__[self.opt.model]()
         self.model.initialize(opt)
-        if not opt.no_log:
+        if not opt.no_log and is_main_process(opt):
             self.writer = util.get_summary_writer(os.path.join(self.basedir, 'logs'))
             self.visualizer = Visualizer(opt)
 
     def train(self, train_loader, **kwargs):
-        print('\nEpoch: %d' % self.epoch)
-        avg_meters = util.AverageMeters()
         opt = self.opt
+        if hasattr(train_loader, "sampler") and hasattr(train_loader.sampler, "set_epoch"):
+            train_loader.sampler.set_epoch(self.epoch)
+
+        if is_main_process(opt):
+            print('\nEpoch: %d' % self.epoch)
+        avg_meters = util.AverageMeters()
         model = self.model
         epoch = self.epoch
 
@@ -50,9 +76,10 @@ class Engine(object):
             
             errors = model.get_current_errors()
             avg_meters.update(errors)
-            util.progress_bar(i, len(train_loader), str(avg_meters))
+            if is_main_process(opt):
+                util.progress_bar(i, len(train_loader), str(avg_meters))
             
-            if not opt.no_log:
+            if not opt.no_log and is_main_process(opt):
                 util.write_loss(self.writer, 'train', avg_meters, iterations)
             
                 if iterations % opt.display_freq == 0 and opt.display_id != 0:
@@ -66,7 +93,7 @@ class Engine(object):
     
         self.epoch += 1
 
-        if not self.opt.no_log:
+        if not self.opt.no_log and is_main_process(opt):
             if self.epoch % opt.save_epoch_freq == 0:
                 print('saving the model at epoch %d, iters %d' %
                     (self.epoch, self.iterations))
@@ -80,9 +107,11 @@ class Engine(object):
                 (time.time() - epoch_start_time))
                 
         # model.update_learning_rate()
-        train_loader.reset()
+        if hasattr(train_loader, "reset"):
+            train_loader.reset()
+        barrier(opt)
 
-    def eval(self, val_loader, dataset_name, savedir=None, loss_key=None, **kwargs):
+    def eval(self, val_loader, dataset_name, savedir=None, loss_key=None, sync_distributed=False, **kwargs):
         
         avg_meters = util.AverageMeters()
         model = self.model
@@ -92,14 +121,19 @@ class Engine(object):
                 index = model.eval(data, savedir=savedir, **kwargs)
                 avg_meters.update(index)
                 
-                util.progress_bar(i, len(val_loader), str(avg_meters))
+                if is_main_process(opt):
+                    util.progress_bar(i, len(val_loader), str(avg_meters))
                 
-        if not opt.no_log:
+        if sync_distributed:
+            avg_meters = _reduce_average_meters(avg_meters, opt)
+            barrier(opt)
+
+        if not opt.no_log and is_main_process(opt):
             util.write_loss(self.writer, join('eval', dataset_name), avg_meters, self.epoch)
         
         if loss_key is not None:
             val_loss = avg_meters[loss_key]
-            if val_loss < self.best_val_loss:
+            if is_main_process(opt) and val_loss < self.best_val_loss:
                 self.best_val_loss = val_loss
                 print('saving the best model at the end of epoch %d, iters %d' % 
                     (self.epoch, self.iterations))
@@ -113,7 +147,9 @@ class Engine(object):
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 model.test(data, savedir=savedir, **kwargs)
-                util.progress_bar(i, len(test_loader))
+                if is_main_process(opt):
+                    util.progress_bar(i, len(test_loader))
+        barrier(opt)
 
     @property
     def iterations(self):

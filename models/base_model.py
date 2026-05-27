@@ -1,6 +1,7 @@
 import os
 import torch
 import util.util as util
+from util.distributed import is_main_process
 
 
 class BaseModel():
@@ -46,6 +47,9 @@ class BaseModel():
         print(self.optimizers[-1])
 
     def save(self, label=None):
+        if not is_main_process(self.opt):
+            return
+
         epoch = self.epoch
         iterations = self.iterations
 

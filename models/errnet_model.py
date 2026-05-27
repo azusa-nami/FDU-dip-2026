@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel
 
 import os
 import numpy as np
@@ -16,6 +17,17 @@ from models import arch
 from .base_model import BaseModel
 from PIL import Image
 from os.path import join
+
+
+def _unwrap_ddp(module):
+    return module.module if isinstance(module, DistributedDataParallel) else module
+
+
+def _clean_state_dict(state_dict):
+    return {
+        key[len("module."):] if key.startswith("module.") else key: value
+        for key, value in state_dict.items()
+    }
 
 
 def _torch_load_compat(path, map_location=None):
@@ -97,11 +109,11 @@ class ERRNetBase(BaseModel):
             raise NotImplementedError('Mode [%s] is not implemented' % mode)
         
         if len(self.gpu_ids) > 0:  # transfer data into gpu
-            input = input.to(device=self.gpu_ids[0])
+            input = input.to(self.device, non_blocking=True)
             if target_t is not None:
-                target_t = target_t.to(device=self.gpu_ids[0])
+                target_t = target_t.to(self.device, non_blocking=True)
             if target_r is not None:
-                target_r = target_r.to(device=self.gpu_ids[0])                
+                target_r = target_r.to(self.device, non_blocking=True)
         
         self.input = input
         
@@ -163,9 +175,6 @@ class ERRNetBase(BaseModel):
             name = os.path.splitext(os.path.basename(self.data_name[0]))[0]
             if not os.path.exists(join(savedir, name)):
                 os.makedirs(join(savedir, name))
-
-            if os.path.exists(join(savedir, name, '{}.png'.format(self.opt.name))):
-                return 
         
         with torch.no_grad():
             output_i = self.forward()
@@ -209,35 +218,44 @@ class ERRNetModel(ERRNetBase):
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
-        self.device = torch.device("cuda:%d" % self.gpu_ids[0] if len(self.gpu_ids) > 0 else "cpu")
+        self.device = opt.device
 
         in_channels = 3
-        self.vgg = None
+        self.feature_extractor = None
+        feature_layers = [int(layer) for layer in str(opt.feature_layers).split(',') if layer.strip()]
         
         if opt.hyper:
-            self.vgg = losses.Vgg19(requires_grad=False).to(self.device)
-            in_channels += 1472
+            self.feature_extractor = losses.DINOv3Features(
+                model_path=opt.feature_model_path,
+                layers=feature_layers,
+                feature_scale=opt.feature_scale,
+                normalize_features=not opt.no_feature_norm,
+                requires_grad=False,
+            ).to(self.device)
+            in_channels += self.feature_extractor.out_channels
         
         self.net_i = arch.__dict__[self.opt.inet](in_channels, 3).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
 
         if self.isTrain:
+            self.loss_feature_extractor = losses.Vgg19(requires_grad=False).to(self.device)
+
             # define loss functions
             self.loss_dic = losses.init_loss(opt, self.Tensor)
             vggloss = losses.ContentLoss()
-            vggloss.initialize(losses.VGGLoss(self.vgg))
+            vggloss.initialize(losses.VGGLoss(self.loss_feature_extractor))
             self.loss_dic['t_vgg'] = vggloss
 
             cxloss = losses.ContentLoss()
             if opt.unaligned_loss == 'vgg':
-                cxloss.initialize(losses.VGGLoss(self.vgg, weights=[0.1], indices=[opt.vgg_layer]))
+                cxloss.initialize(losses.VGGLoss(self.loss_feature_extractor, weights=[0.1], indices=[opt.vgg_layer]))
             elif opt.unaligned_loss == 'ctx':
-                cxloss.initialize(losses.CXLoss(self.vgg, weights=[0.1,0.1,0.1], indices=[8, 13, 22]))
+                cxloss.initialize(losses.CXLoss(self.loss_feature_extractor, weights=[0.1,0.1,0.1], indices=[8, 13, 22]))
             elif opt.unaligned_loss == 'mse':
                 cxloss.initialize(nn.MSELoss())
             elif opt.unaligned_loss == 'ctx_vgg':
-                cxloss.initialize(losses.CXLoss(self.vgg, weights=[0.1,0.1,0.1,0.1], indices=[8, 13, 22, 31], criterions=[losses.CX_loss]*3+[nn.L1Loss()]))
+                cxloss.initialize(losses.CXLoss(self.loss_feature_extractor, weights=[0.1,0.1,0.1,0.1], indices=[8, 13, 22, 31], criterions=[losses.CX_loss]*3+[nn.L1Loss()]))
             else:
                 raise NotImplementedError
 
@@ -245,19 +263,33 @@ class ERRNetModel(ERRNetBase):
 
             # Define discriminator
             # if self.opt.lambda_gan > 0:
-            self.netD = networks.define_D(opt, 3)
+            self.netD = networks.define_D(opt, 3).to(self.device)
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
                                             lr=opt.lr, betas=(0.9, 0.999))
-            self._init_optimizer([self.optimizer_D])
 
             # initialize optimizers
             self.optimizer_G = torch.optim.Adam(self.net_i.parameters(), 
                 lr=opt.lr, betas=(0.9, 0.999), weight_decay=opt.wd)
 
-            self._init_optimizer([self.optimizer_G])
+            self._init_optimizer([self.optimizer_G, self.optimizer_D])
 
         if opt.resume:
             self.load(self, opt.resume_epoch)
+
+        if opt.distributed:
+            self.net_i = DistributedDataParallel(
+                self.net_i,
+                device_ids=[opt.local_rank],
+                output_device=opt.local_rank,
+                find_unused_parameters=False,
+            )
+            if self.isTrain:
+                self.netD = DistributedDataParallel(
+                    self.netD,
+                    device_ids=[opt.local_rank],
+                    output_device=opt.local_rank,
+                    find_unused_parameters=False,
+                )
         
         if opt.no_verbose is False:
             self.print_network()
@@ -306,15 +338,19 @@ class ERRNetModel(ERRNetBase):
         # without edge
         input_i = self.input
 
-        if self.vgg is not None:
-            hypercolumn = self.vgg(self.input)
+        if self.feature_extractor is not None:
+            hypercolumn = self.feature_extractor(self.input, [self.opt.hyper_layer])
             _, C, H, W = self.input.shape
             hypercolumn = [F.interpolate(feature.detach(), size=(H, W), mode='bilinear', align_corners=False) for feature in hypercolumn]
             input_i = [input_i]
             input_i.extend(hypercolumn)
             input_i = torch.cat(input_i, dim=1)
 
-        output_i = self.net_i(input_i)
+        net_i = self.net_i
+        if isinstance(net_i, DistributedDataParallel) and not net_i.training:
+            net_i = _unwrap_ddp(net_i)
+
+        output_i = net_i(input_i)
 
         self.output_i = output_i
 
@@ -368,12 +404,12 @@ class ERRNetModel(ERRNetBase):
             state_dict = _torch_load_compat(model_path)
             model.epoch = state_dict['epoch']
             model.iterations = state_dict['iterations']
-            model.net_i.load_state_dict(state_dict['icnn'])
+            model.net_i.load_state_dict(_clean_state_dict(state_dict['icnn']))
             if model.isTrain:
                 model.optimizer_G.load_state_dict(state_dict['opt_g'])
         else:
             state_dict = _torch_load_compat(icnn_path, map_location=torch.device('cpu'))
-            model.net_i.load_state_dict(state_dict['icnn'])
+            model.net_i.load_state_dict(_clean_state_dict(state_dict['icnn']))
             model.epoch = state_dict['epoch']
             model.iterations = state_dict['iterations']
             # if model.isTrain:
@@ -382,7 +418,7 @@ class ERRNetModel(ERRNetBase):
         if model.isTrain:
             if 'netD' in state_dict:
                 print('Resume netD ...')
-                model.netD.load_state_dict(state_dict['netD'])
+                model.netD.load_state_dict(_clean_state_dict(state_dict['netD']))
                 model.optimizer_D.load_state_dict(state_dict['opt_d'])
             
         print('Resume from epoch %d, iteration %d' % (model.epoch, model.iterations))
@@ -390,7 +426,7 @@ class ERRNetModel(ERRNetBase):
 
     def state_dict(self):
         state_dict = {
-            'icnn': self.net_i.state_dict(),
+            'icnn': _unwrap_ddp(self.net_i).state_dict(),
             'opt_g': self.optimizer_G.state_dict(), 
             'epoch': self.epoch, 'iterations': self.iterations
         }
@@ -398,7 +434,7 @@ class ERRNetModel(ERRNetBase):
         if self.opt.lambda_gan > 0:
             state_dict.update({
                 'opt_d': self.optimizer_D.state_dict(),
-                'netD': self.netD.state_dict(),
+                'netD': _unwrap_ddp(self.netD).state_dict(),
             })
 
         return state_dict
@@ -429,21 +465,21 @@ class NetworkWrapper(ERRNetBase):
         
         if self.isTrain:
             # define loss functions
-            self.vgg = losses.Vgg19(requires_grad=False).to(self.device)
+            self.loss_feature_extractor = losses.Vgg19(requires_grad=False).to(self.device)
             self.loss_dic = losses.init_loss(opt, self.Tensor)
             vggloss = losses.ContentLoss()
-            vggloss.initialize(losses.VGGLoss(self.vgg))
+            vggloss.initialize(losses.VGGLoss(self.loss_feature_extractor))
             self.loss_dic['t_vgg'] = vggloss
 
             cxloss = losses.ContentLoss()
             if opt.unaligned_loss == 'vgg':
-                cxloss.initialize(losses.VGGLoss(self.vgg, weights=[0.1], indices=[31]))
+                cxloss.initialize(losses.VGGLoss(self.loss_feature_extractor, weights=[0.1], indices=[opt.vgg_layer]))
             elif opt.unaligned_loss == 'ctx':
-                cxloss.initialize(losses.CXLoss(self.vgg, weights=[0.1,0.1,0.1], indices=[8, 13, 22]))
+                cxloss.initialize(losses.CXLoss(self.loss_feature_extractor, weights=[0.1,0.1,0.1], indices=[8, 13, 22]))
             elif opt.unaligned_loss == 'mse':
                 cxloss.initialize(nn.MSELoss())
             elif opt.unaligned_loss == 'ctx_vgg':
-                cxloss.initialize(losses.CXLoss(self.vgg, weights=[0.1,0.1,0.1,0.1], indices=[8, 13, 22, 31], criterions=[losses.CX_loss]*3+[nn.L1Loss()]))
+                cxloss.initialize(losses.CXLoss(self.loss_feature_extractor, weights=[0.1,0.1,0.1,0.1], indices=[8, 13, 22, 31], criterions=[losses.CX_loss]*3+[nn.L1Loss()]))
                 
             else:
                 raise NotImplementedError            

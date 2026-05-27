@@ -24,7 +24,10 @@ cal_bwssim = Bandwise(partial(compare_ssim, data_range=255))
 
 
 def compare_ncc(x, y):
-    return np.mean((x-np.mean(x)) * (y-np.mean(y))) / (np.std(x) * np.std(y)) 
+    denom = np.std(x) * np.std(y)
+    if denom < 1e-12:
+        return 0.0
+    return np.mean((x-np.mean(x)) * (y-np.mean(y))) / denom
 
 
 def ssq_error(correct, estimate):
@@ -53,7 +56,8 @@ def local_error(correct, estimate, window_size, window_shift):
                 estimate_curr = estimate[i:i+window_size, j:j+window_size, c]
                 ssq += ssq_error(correct_curr, estimate_curr)
                 total += np.sum(correct_curr**2)
-    # assert np.isnan(ssq/total)
+    if total < 1e-12:
+        return 0.0
     return ssq / total
 
 def quality_assess(X, Y):
@@ -62,4 +66,4 @@ def quality_assess(X, Y):
     ssim = np.mean(cal_bwssim(Y, X))
     lmse = local_error(Y, X, 20, 10)
     ncc = compare_ncc(Y, X)
-    return {'PSNR':psnr, 'SSIM': ssim, 'LMSE': lmse, 'NCC': ncc}
+    return {'PSNR': float(psnr), 'SSIM': float(ssim), 'LMSE': float(lmse), 'NCC': float(ncc)}

@@ -20,6 +20,7 @@ class BaseOptions():
         self.parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
         self.parser.add_argument('--resume_epoch', '-re', type=int, default=None, help='checkpoint to use. (default: latest')
         self.parser.add_argument('--seed', type=int, default=2018, help='random seed to use. Default=2018')
+        self.parser.add_argument('--data_root', type=str, default='./datasets/data', help='organized dataset root')
 
         # for setting input
         self.parser.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')

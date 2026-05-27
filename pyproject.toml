@@ -1,0 +1,27 @@
+[project]
+name = "errnet-dip26"
+version = "0.1.0"
+description = "DIP2026 ERRNet baseline reproduction environment"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch==2.7.0",
+    "torchvision==0.22.0",
+    "torchaudio==2.7.0",
+    "matplotlib",
+    "dominate",
+    "scikit-image",
+    "tensorboardX",
+    "pyyaml",
+    "h5py",
+    "opencv-python-headless",
+    "pillow",
+    "transformers",
+    "safetensors",
+    "setuptools<82",
+    "wheel",
+]
+
+[tool.uv.extra-build-dependencies]
+visdom = ["setuptools"]
+[tool.uv]
+package = false

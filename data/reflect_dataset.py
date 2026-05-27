@@ -1,7 +1,7 @@
 import os.path
 from os.path import join
 from data.image_folder import make_dataset
-from data.transforms import Sobel, to_norm_tensor, to_tensor, ReflectionSythesis_1, ReflectionSythesis_2
+from data.transforms import Sobel, to_norm_tensor, to_tensor, ReflectionSythesis_1, ReflectionSythesis_2, AdvancedReflectionSythesis, MixedReflectionSythesis
 from PIL import Image
 import random
 import torch
@@ -110,19 +110,33 @@ class DataLoader(torch.utils.data.DataLoader):
 
 
 class CEILDataset(BaseDataset):
-    def __init__(self, datadir, fns=None, size=None, enable_transforms=True, low_sigma=2, high_sigma=5, low_gamma=1.3, high_gamma=1.3):
+    def __init__(self, datadir, fns=None, size=None, enable_transforms=True, low_sigma=2, high_sigma=5, low_gamma=1.3, high_gamma=1.3, synthesis='mixed'):
         super(CEILDataset, self).__init__()
         self.size = size
         self.datadir = datadir
         self.enable_transforms = enable_transforms
+        self.synthesis = synthesis
 
         sortkey = lambda key: os.path.split(key)[-1]
         self.paths = sorted(make_dataset(datadir, fns), key=sortkey)
         if size is not None:
             self.paths = self.paths[:size]
 
-        self.syn_model = ReflectionSythesis_1(kernel_sizes=[11], low_sigma=low_sigma, high_sigma=high_sigma, low_gamma=low_gamma, high_gamma=high_gamma)
+        if synthesis == 'legacy':
+            self.syn_model = ReflectionSythesis_1(kernel_sizes=[11], low_sigma=low_sigma, high_sigma=high_sigma, low_gamma=low_gamma, high_gamma=high_gamma)
+        elif synthesis == 'advanced':
+            self.syn_model = AdvancedReflectionSythesis()
+        elif synthesis == 'reflection2':
+            self.syn_model = ReflectionSythesis_2()
+        elif synthesis == 'mixed':
+            self.syn_model = MixedReflectionSythesis(reflection2_ratio=0.8, advanced_ratio=0.2)
+        else:
+            raise NotImplementedError('Synthesis model [%s] is not implemented' % synthesis)
         self.reset(shuffle=False)
+
+    def set_synthesis_mix(self, reflection2_ratio, advanced_ratio):
+        if hasattr(self.syn_model, 'set_ratios'):
+            self.syn_model.set_ratios(reflection2_ratio, advanced_ratio)
 
     def reset(self, shuffle=True):
         if shuffle:

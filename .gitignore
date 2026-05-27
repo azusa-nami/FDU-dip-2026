@@ -12,3 +12,8 @@ bak
 results
 raw_data
 processed_data
+datasets/data
+datasets/raw_data
+docs/
+uv.lock
+.venv/

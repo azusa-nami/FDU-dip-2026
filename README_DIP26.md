@@ -130,9 +130,29 @@ python train_errnet_unaligned.py --name errnet_unaligned_ft_cpu --hyper -r --gpu
 
 | Dataset | PSNR | SSIM | NCC | LMSE |
 | --- | --- | --- | --- | --- |
-| CEILNet Table 2 | 27.88 | 0.9407 | 0.9808 | 0.0048 |
+| CEILNet| 27.88 | 0.9407 | 0.9808 | 0.0048 |
 | real20 | 23.55 | 0.8285 | 0.8877 | 0.0201 |
 | objects | 24.85 | 0.8980 | 0.9817 | 0.0029|
 | postcard | 22.07 | 0.8773 | 0.9463 | 0.0044 |
 | wild | 25.18 | 0.886 | 0.9359 | 0.0083|
 
+| Dataset | PSNR | SSIM | NCC | LMSE |
+| --- | --- | --- | --- | --- |
+| CEILNet | 27.22 | 0.9383 | 0.9754 | 0.0047 | down
+| real20 | 24.81 | 0.8439 | 0.9141 | 0.0168 | up
+| objects | 24.86 | 0.8985 | 0.9799 | 0.0034 | draw
+| postcard | 20.78 | 0.8757 | 0.9233 | 0.0044 | down
+| wild | 25.76 | 0.9070 | 0.9497 | 0.0054 | up
+
+divov3+data transform                    
+ceilnet_table2: LMSE: 0.0125 | NCC: 0.8818 | PSNR: 18.6178 | SSIM: 0.8318 |                  
+real20: LMSE: 0.0173 | NCC: 0.9111 | PSNR: 24.3347 | SSIM: 0.8425 |                   
+postcard: LMSE: 0.0031 | NCC: 0.9653 | PSNR: 24.7796 | SSIM: 0.9103 |                   
+objects: LMSE: 0.0029 | NCC: 0.9844 | PSNR: 25.7775 | SSIM: 0.9119 |              
+wild: LMSE: 0.0055 | NCC: 0.9500 | PSNR: 25.7647 | SSIM: 0.9069 | 
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --nproc_per_node=4 test_errnet.py \
+--dataset all \
+--name errnet_dinov3_scaled \
+-r --icnn_path checkpoints/errnet_dinov3_scaled/errnet_latest.pt \
+--hyper --feature_model_path /oldhome/zengyuqi/model/dinov3
