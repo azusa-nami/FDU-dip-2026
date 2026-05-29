@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -49,8 +50,12 @@ def build_train_loader(opt):
 
 def build_eval_loaders(opt):
     test_root = Path(opt.data_root) / "test"
-    ceilnet = datasets.CEILTestDataset(str(test_root / "ceilnet_table2"))
-    real20 = datasets.CEILTestDataset(str(test_root / "real20"), size=20, max_long_edge=512)
+    specs = {
+        "real20": {"path": "real20", "size": 20, "max_long_edge": 512},
+        "objects": {"path": "objects"},
+        "postcard": {"path": "postcard"},
+        "wild": {"path": "wild"},
+    }
 
     loader_kwargs = {
         "batch_size": 1,
@@ -58,10 +63,15 @@ def build_eval_loaders(opt):
         "num_workers": opt.nThreads,
         "pin_memory": len(opt.gpu_ids) > 0,
     }
-    return (
-        datasets.DataLoader(ceilnet, **loader_kwargs),
-        datasets.DataLoader(real20, **loader_kwargs),
-    )
+    eval_loaders = {}
+    for name, spec in specs.items():
+        dataset = datasets.CEILTestDataset(
+            str(test_root / spec["path"]),
+            size=spec.get("size"),
+            max_long_edge=spec.get("max_long_edge"),
+        )
+        eval_loaders[name] = datasets.DataLoader(dataset, **loader_kwargs)
+    return eval_loaders
 
 
 def set_learning_rate(engine, lr):
@@ -71,19 +81,92 @@ def set_learning_rate(engine, lr):
         util.set_opt_param(optimizer, "lr", lr)
 
 
+def build_schedulers(engine, opt):
+    if opt.lr_policy == "manual":
+        return []
+    if opt.lr_policy == "cosine":
+        return [
+            torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=max(1, opt.nEpochs),
+                eta_min=opt.min_lr,
+            )
+            for optimizer in engine.model.optimizers
+        ]
+    if opt.lr_policy == "step":
+        return [
+            torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=opt.lr_step_size,
+                gamma=opt.lr_gamma,
+            )
+            for optimizer in engine.model.optimizers
+        ]
+    raise NotImplementedError("LR policy [{}] is not implemented".format(opt.lr_policy))
+
+
+def step_schedulers(schedulers, opt):
+    for scheduler in schedulers:
+        if not getattr(scheduler.optimizer, "_opt_called", False):
+            continue
+        scheduler.step()
+    if schedulers and is_main_process(opt):
+        lr = schedulers[0].optimizer.param_groups[0]["lr"]
+        print("[i] scheduler lr: {}".format(lr))
+
+
 def set_synthesis_schedule(train_loader, opt, epoch):
     if opt.synthesis != "mixed":
         return
 
-    if epoch < 0.7 * opt.nEpochs:
-        ratio = (0.8, 0.2)
-    else:
-        ratio = (0.6, 0.4)
-
+    ratio = (0.8, 0.2)
     synthetic_dataset = train_loader.dataset.datasets[0]
     synthetic_dataset.set_synthesis_mix(*ratio)
     if is_main_process(opt):
         print("[i] synthesis mix reflection2/advanced: {:.1f}/{:.1f}".format(*ratio))
+
+
+def is_better_score(score, best_score, opt):
+    if best_score is None:
+        return True
+    if opt.early_stop_metric == "LMSE":
+        return score < best_score - opt.early_stop_min_delta
+    return score > best_score + opt.early_stop_min_delta
+
+
+def eval_validation_suite(engine, eval_loaders, opt):
+    scores = {}
+    metric = opt.early_stop_metric
+    for dataset_name, loader in eval_loaders.items():
+        meters = engine.eval(loader, dataset_name=dataset_name)
+        if metric in meters.keys():
+            scores[dataset_name] = meters[metric]
+
+    if not scores:
+        raise RuntimeError("Metric [{}] was not produced by validation datasets.".format(metric))
+
+    score = sum(scores.values()) / len(scores)
+    if is_main_process(opt):
+        details = ", ".join("{}={:.4f}".format(name, value) for name, value in scores.items())
+        print("[i] validation {} mean={:.4f} ({})".format(metric, score, details))
+    return score, scores
+
+
+def sync_stop_signal(engine, opt, epoch, should_stop):
+    if not opt.distributed:
+        return should_stop
+
+    signal_path = Path(engine.basedir) / "early_stop_signal.txt"
+    if is_main_process(opt):
+        signal_path.write_text("{} {}\n".format(epoch, int(should_stop)))
+        return should_stop
+
+    while True:
+        if signal_path.exists():
+            parts = signal_path.read_text().strip().split()
+            if len(parts) == 2 and int(parts[0]) == epoch:
+                return bool(int(parts[1]))
+        time.sleep(5)
 
 
 def main():
@@ -103,38 +186,56 @@ def main():
 
     try:
         train_loader = build_train_loader(opt)
-        eval_ceilnet_loader, eval_real20_loader = build_eval_loaders(opt)
+        eval_loaders = build_eval_loaders(opt)
         engine = Engine(opt)
+        schedulers = build_schedulers(engine, opt)
+        best_val_score = None
+        bad_eval_count = 0
 
         if opt.resume and is_main_process(opt):
-            engine.eval(eval_ceilnet_loader, dataset_name="testdata_table2")
+            engine.eval(eval_loaders["real20"], dataset_name="real20")
         barrier(opt)
 
         engine.model.opt.lambda_gan = 0
-        set_learning_rate(engine, 1e-4)
+        if opt.lr_policy == "manual":
+            set_learning_rate(engine, 1e-4)
 
         while engine.epoch < opt.nEpochs:
             if engine.epoch == 20:
                 engine.model.opt.lambda_gan = 0.01
-            if engine.epoch == 30:
+            if opt.lr_policy == "manual" and engine.epoch == 30:
                 set_learning_rate(engine, 5e-5)
-            if engine.epoch == 40:
+            if opt.lr_policy == "manual" and engine.epoch == 40:
                 set_learning_rate(engine, 1e-5)
             if engine.epoch == 45:
-                ratio = [0.5, 0.5]
-                if is_main_process(opt):
-                    print("[i] adjust fusion ratio to {}".format(ratio))
-                train_loader.dataset.fusion_ratios = ratio
-                set_learning_rate(engine, 5e-5)
-            if engine.epoch == 50:
+                if opt.lr_policy == "manual":
+                    set_learning_rate(engine, 5e-5)
+            if opt.lr_policy == "manual" and engine.epoch == 50:
                 set_learning_rate(engine, 1e-5)
 
             set_synthesis_schedule(train_loader, opt, engine.epoch)
             engine.train(train_loader)
+            step_schedulers(schedulers, opt)
 
-            if is_main_process(opt) and engine.epoch % 5 == 0:
-                engine.eval(eval_ceilnet_loader, dataset_name="testdata_table2")
-                engine.eval(eval_real20_loader, dataset_name="testdata_real20")
+            should_stop = False
+            if engine.epoch % opt.eval_freq == 0:
+                if is_main_process(opt):
+                    val_score, _ = eval_validation_suite(engine, eval_loaders, opt)
+                    if is_better_score(val_score, best_val_score, opt):
+                        best_val_score = val_score
+                        bad_eval_count = 0
+                        print("[i] new best validation {}: {:.4f}".format(opt.early_stop_metric, val_score))
+                        engine.model.save(label="best_{}_val".format(opt.early_stop_metric.lower()))
+                    else:
+                        bad_eval_count += 1
+                        print("[i] validation did not improve: {}/{}".format(bad_eval_count, opt.early_stop_patience))
+                    should_stop = opt.early_stop_patience > 0 and bad_eval_count >= opt.early_stop_patience
+
+                should_stop = sync_stop_signal(engine, opt, engine.epoch, should_stop)
+                if should_stop:
+                    if is_main_process(opt):
+                        print("[i] early stopping at epoch {}".format(engine.epoch))
+                    break
             barrier(opt)
     finally:
         cleanup_distributed()

@@ -41,10 +41,7 @@ def set_learning_rate(lr):
 set_learning_rate(1e-4)
 while engine.epoch < 80:
     if opt.synthesis == 'mixed':
-        if engine.epoch < 0.7 * 80:
-            train_dataset.set_synthesis_mix(0.8, 0.2)
-        else:
-            train_dataset.set_synthesis_mix(0.6, 0.4)
+        train_dataset.set_synthesis_mix(0.8, 0.2)
 
     if engine.epoch == 65:
         set_learning_rate(5e-5)

@@ -6,6 +6,7 @@ from torch.nn.parallel import DistributedDataParallel
 import os
 import numpy as np
 import itertools
+from contextlib import contextmanager
 from collections import OrderedDict
 
 import util.util as util
@@ -35,6 +36,21 @@ def _torch_load_compat(path, map_location=None):
         return torch.load(path, map_location=map_location, weights_only=False)
     except TypeError:
         return torch.load(path, map_location=map_location)
+
+
+def _build_optimizer(opt, params):
+    optimizer_cls = torch.optim.AdamW if opt.optimizer == 'adamw' else torch.optim.Adam
+    return optimizer_cls(params, lr=opt.lr, betas=(0.9, 0.999), weight_decay=opt.wd)
+
+
+def _copy_state_dict(state_dict, device=None):
+    copied = {}
+    for key, value in state_dict.items():
+        tensor = value.detach().clone()
+        if device is not None:
+            tensor = tensor.to(device)
+        copied[key] = tensor
+    return copied
 
 
 def tensor2im(image_tensor, imtype=np.uint8):
@@ -126,14 +142,22 @@ class ERRNetBase(BaseModel):
         
         if target_t is not None:            
             self.target_edge = self.edge_map(self.target_t)         
-            
+
+    def _using_ema_for_eval(self):
+        return False
+
+    @contextmanager
+    def _ema_eval_context(self):
+        yield
+	            
     def eval(self, data, savedir=None, suffix=None, pieapp=None):
         # only the 1st input of the whole minibatch would be evaluated
         self._eval()
         self.set_input(data, 'eval')
 
         with torch.no_grad():
-            self.forward()
+            with self._ema_eval_context():
+                self.forward()
 
             output_i = tensor2im(self.output_i)
             target = tensor2im(self.target_t)
@@ -177,7 +201,8 @@ class ERRNetBase(BaseModel):
                 os.makedirs(join(savedir, name))
         
         with torch.no_grad():
-            output_i = self.forward()
+            with self._ema_eval_context():
+                output_i = self.forward()
             output_i = tensor2im(output_i)
                 # if os.path.exists(join(savedir, name,'t_output.png')):
                 #     i = 2
@@ -201,6 +226,8 @@ class ERRNetModel(ERRNetBase):
         self.epoch = 0
         self.iterations = 0
         self.device = torch.device("cpu")
+        self.ema_state = None
+        self._icnn_partial_load = False
 
     def print_network(self):
         print('--------------------- Model ---------------------')
@@ -216,15 +243,124 @@ class ERRNetModel(ERRNetBase):
     def _train(self):
         self.net_i.train()
 
+    def _net_i_module(self):
+        return _unwrap_ddp(self.net_i)
+
+    def _ema_enabled(self):
+        return getattr(self.opt, 'ema_decay', 0) > 0
+
+    def _init_ema_state(self):
+        self.ema_state = _copy_state_dict(self._net_i_module().state_dict())
+
+    def _load_ema_state(self, state_dict):
+        cleaned = _clean_state_dict(state_dict)
+        if getattr(self.opt, 'hyper', False):
+            cleaned, _, _ = self._compatible_icnn_state(cleaned, prefix='icnn_ema')
+            ema_state = _copy_state_dict(self._net_i_module().state_dict(), device=self.device)
+            ema_state.update(_copy_state_dict(cleaned, device=self.device))
+            self.ema_state = ema_state
+        else:
+            self.ema_state = _copy_state_dict(cleaned, device=self.device)
+
+    def _compatible_icnn_state(self, state_dict, prefix='icnn'):
+        target_state = self._net_i_module().state_dict()
+        compatible = {}
+        converted = []
+        skipped = []
+
+        for key, value in state_dict.items():
+            if key not in target_state:
+                skipped.append(key)
+                continue
+
+            target_value = target_state[key]
+            if value.shape == target_value.shape:
+                compatible[key] = value
+                continue
+
+            if (
+                key == 'conv1.conv2d.weight'
+                and value.dim() == 4
+                and target_value.dim() == 4
+                and target_value.shape[1] >= 3
+                and value.shape[1] >= 3
+                and value.shape[0] == target_value.shape[0]
+                and value.shape[2:] == target_value.shape[2:]
+            ):
+                converted_value = target_value.clone()
+                converted_value[:, :3] = value[:, :3]
+                compatible[key] = converted_value.contiguous()
+                converted.append(key)
+                continue
+
+            skipped.append(key)
+
+        missing = [key for key in target_state.keys() if key not in compatible]
+        if converted:
+            print('[i] {}: converted old hyper input weights for {}'.format(prefix, ', '.join(converted)))
+        if missing or skipped:
+            print('[i] {}: partial load, missing {}, skipped {}'.format(prefix, len(missing), len(skipped)))
+        return compatible, missing, skipped
+
+    def _load_icnn_state(self, state_dict):
+        cleaned = _clean_state_dict(state_dict)
+        if getattr(self.opt, 'hyper', False):
+            compatible, _, _ = self._compatible_icnn_state(cleaned, prefix='icnn')
+            self._net_i_module().load_state_dict(compatible, strict=False)
+            self._icnn_partial_load = len(compatible) != len(self._net_i_module().state_dict())
+        else:
+            self.net_i.load_state_dict(cleaned)
+            self._icnn_partial_load = False
+
+    def _update_ema(self):
+        if not self._ema_enabled():
+            return
+        module_state = self._net_i_module().state_dict()
+        if self.ema_state is None:
+            self._init_ema_state()
+            return
+
+        decay = self.opt.ema_decay
+        for key, value in module_state.items():
+            value = value.detach()
+            if key not in self.ema_state:
+                self.ema_state[key] = value.clone()
+            elif torch.is_floating_point(value):
+                self.ema_state[key].mul_(decay).add_(value, alpha=1.0 - decay)
+            else:
+                self.ema_state[key].copy_(value)
+
+    def _using_ema_for_eval(self):
+        return self.ema_state is not None and not getattr(self.opt, 'no_ema_eval', False)
+
+    @contextmanager
+    def _ema_eval_context(self):
+        if not self._using_ema_for_eval():
+            yield
+            return
+
+        module = self._net_i_module()
+        backup = _copy_state_dict(module.state_dict())
+        module.load_state_dict(self.ema_state)
+        try:
+            yield
+        finally:
+            module.load_state_dict(backup)
+
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
         self.device = opt.device
 
         in_channels = 3
+        dino_channels = None
         self.feature_extractor = None
+        self.vgg_feature_extractor = None
         feature_layers = [int(layer) for layer in str(opt.feature_layers).split(',') if layer.strip()]
         
         if opt.hyper:
+            self.vgg_feature_extractor = losses.Vgg19(requires_grad=False).to(self.device)
+            self.vgg_feature_extractor.eval()
+            in_channels += 64 + 128 + 256 + 512 + 512
             self.feature_extractor = losses.DINOv3Features(
                 model_path=opt.feature_model_path,
                 layers=feature_layers,
@@ -232,11 +368,12 @@ class ERRNetModel(ERRNetBase):
                 normalize_features=not opt.no_feature_norm,
                 requires_grad=False,
             ).to(self.device)
-            in_channels += self.feature_extractor.out_channels
+            dino_channels = self.feature_extractor.out_channels
         
-        self.net_i = arch.__dict__[self.opt.inet](in_channels, 3).to(self.device)
+        self.net_i = arch.__dict__[self.opt.inet](in_channels, 3, dino_channels=dino_channels).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
+        self.ema_state = None
 
         if self.isTrain:
             self.loss_feature_extractor = losses.Vgg19(requires_grad=False).to(self.device)
@@ -264,17 +401,18 @@ class ERRNetModel(ERRNetBase):
             # Define discriminator
             # if self.opt.lambda_gan > 0:
             self.netD = networks.define_D(opt, 3).to(self.device)
-            self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
-                                            lr=opt.lr, betas=(0.9, 0.999))
+            self.optimizer_D = _build_optimizer(opt, self.netD.parameters())
 
             # initialize optimizers
-            self.optimizer_G = torch.optim.Adam(self.net_i.parameters(), 
-                lr=opt.lr, betas=(0.9, 0.999), weight_decay=opt.wd)
+            self.optimizer_G = _build_optimizer(opt, self.net_i.parameters())
 
             self._init_optimizer([self.optimizer_G, self.optimizer_D])
 
         if opt.resume:
             self.load(self, opt.resume_epoch)
+
+        if self.isTrain and self._ema_enabled() and self.ema_state is None:
+            self._init_ema_state()
 
         if opt.distributed:
             self.net_i = DistributedDataParallel(
@@ -337,20 +475,25 @@ class ERRNetModel(ERRNetBase):
     def forward(self):
         # without edge
         input_i = self.input
+        dino_feature = None
 
         if self.feature_extractor is not None:
-            hypercolumn = self.feature_extractor(self.input, [self.opt.hyper_layer])
-            _, C, H, W = self.input.shape
-            hypercolumn = [F.interpolate(feature.detach(), size=(H, W), mode='bilinear', align_corners=False) for feature in hypercolumn]
-            input_i = [input_i]
-            input_i.extend(hypercolumn)
-            input_i = torch.cat(input_i, dim=1)
+            _, _, height, width = self.input.shape
+            with torch.no_grad():
+                vgg_features = self.vgg_feature_extractor(self.input)
+                vgg_features = [
+                    F.interpolate(feature, size=(height, width), mode='bilinear', align_corners=False)
+                    for feature in vgg_features
+                ]
+                dino_feature = self.feature_extractor(self.input, [self.opt.hyper_layer])[0]
+            input_i = torch.cat([self.input] + vgg_features, dim=1)
+            dino_feature = dino_feature.detach()
 
         net_i = self.net_i
         if isinstance(net_i, DistributedDataParallel) and not net_i.training:
             net_i = _unwrap_ddp(net_i)
 
-        output_i = net_i(input_i)
+        output_i = net_i(input_i, dino_feature)
 
         self.output_i = output_i
 
@@ -363,11 +506,16 @@ class ERRNetModel(ERRNetBase):
         if self.opt.lambda_gan > 0:
             self.optimizer_D.zero_grad()
             self.backward_D()
+            if self.opt.clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.netD.parameters(), self.opt.clip_grad_norm)
             self.optimizer_D.step()
 
         self.optimizer_G.zero_grad()
         self.backward_G()
+        if self.opt.clip_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.net_i.parameters(), self.opt.clip_grad_norm)
         self.optimizer_G.step()
+        self._update_ema()
         
     def get_current_errors(self):
         ret_errors = OrderedDict()
@@ -404,12 +552,18 @@ class ERRNetModel(ERRNetBase):
             state_dict = _torch_load_compat(model_path)
             model.epoch = state_dict['epoch']
             model.iterations = state_dict['iterations']
-            model.net_i.load_state_dict(_clean_state_dict(state_dict['icnn']))
-            if model.isTrain:
+            model._load_icnn_state(state_dict['icnn'])
+            if 'icnn_ema' in state_dict:
+                model._load_ema_state(state_dict['icnn_ema'])
+            if model.isTrain and not model._icnn_partial_load:
                 model.optimizer_G.load_state_dict(state_dict['opt_g'])
+            elif model.isTrain:
+                print('[i] skip optimizer_G state because icnn was partially loaded')
         else:
             state_dict = _torch_load_compat(icnn_path, map_location=torch.device('cpu'))
-            model.net_i.load_state_dict(_clean_state_dict(state_dict['icnn']))
+            model._load_icnn_state(state_dict['icnn'])
+            if 'icnn_ema' in state_dict:
+                model._load_ema_state(state_dict['icnn_ema'])
             model.epoch = state_dict['epoch']
             model.iterations = state_dict['iterations']
             # if model.isTrain:
@@ -430,6 +584,9 @@ class ERRNetModel(ERRNetBase):
             'opt_g': self.optimizer_G.state_dict(), 
             'epoch': self.epoch, 'iterations': self.iterations
         }
+
+        if self.ema_state is not None:
+            state_dict['icnn_ema'] = self.ema_state
 
         if self.opt.lambda_gan > 0:
             state_dict.update({
@@ -487,16 +644,14 @@ class NetworkWrapper(ERRNetBase):
             self.loss_dic['t_cx'] = cxloss
 
             # initialize optimizers
-            self.optimizer_G = torch.optim.Adam(self.net.parameters(), 
-                lr=opt.lr, betas=(opt.beta1, 0.999), weight_decay=opt.wd)
+            self.optimizer_G = _build_optimizer(opt, self.net.parameters())
 
             self._init_optimizer([self.optimizer_G])
 
             # define discriminator
             # if self.opt.lambda_gan > 0:
             self.netD = networks.define_D(opt, 3)
-            self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
-                                            lr=opt.lr, betas=(opt.beta1, 0.999))
+            self.optimizer_D = _build_optimizer(opt, self.netD.parameters())
             self._init_optimizer([self.optimizer_D])
         
         if opt.no_verbose is False:

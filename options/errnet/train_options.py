@@ -15,7 +15,19 @@ class TrainOptions(BaseOptions):
         # for training (Note: in train_errnet.py, we mannually tune the training protocol, but you can also use following setting by modifying the code in errnet_model.py)
         self.parser.add_argument('--nEpochs', '-n', type=int, default=60, help='# of epochs to run')
         self.parser.add_argument('--lr', type=float, default=1e-4, help='initial learning rate for adam')
-        self.parser.add_argument('--wd', type=float, default=0, help='weight decay for adam')
+        self.parser.add_argument('--wd', type=float, default=1e-4, help='weight decay for optimizer')
+        self.parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'adamw'], help='optimizer for generator and discriminator')
+        self.parser.add_argument('--lr_policy', type=str, default='cosine', choices=['manual', 'cosine', 'step'], help='learning rate schedule')
+        self.parser.add_argument('--min_lr', type=float, default=1e-6, help='minimum learning rate for cosine schedule')
+        self.parser.add_argument('--lr_step_size', type=int, default=20, help='epoch interval for step schedule')
+        self.parser.add_argument('--lr_gamma', type=float, default=0.5, help='multiplicative factor for step schedule')
+        self.parser.add_argument('--early_stop_patience', type=int, default=10, help='stop after this many eval rounds without improvement; <=0 disables')
+        self.parser.add_argument('--early_stop_min_delta', type=float, default=0.0, help='minimum improvement needed for early stopping')
+        self.parser.add_argument('--early_stop_metric', type=str, default='PSNR', choices=['PSNR', 'SSIM', 'NCC', 'LMSE'], help='metric averaged across validation datasets for early stopping')
+        self.parser.add_argument('--eval_freq', type=int, default=5, help='evaluate every N epochs')
+        self.parser.add_argument('--clip_grad_norm', type=float, default=1.0, help='max gradient norm; <=0 disables clipping')
+        self.parser.add_argument('--ema_decay', type=float, default=0.999, help='generator EMA decay; <=0 disables EMA')
+        self.parser.add_argument('--no_ema_eval', action='store_true', help='do not use EMA weights for eval/test even if available')
 
         self.parser.add_argument('--low_sigma', type=float, default=2, help='min sigma in synthetic dataset')
         self.parser.add_argument('--high_sigma', type=float, default=5, help='max sigma in synthetic dataset')
@@ -39,6 +51,6 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--vgg_layer', type=int, default=31, help='VGG19 layer for the unaligned vgg loss')
         
         self.parser.add_argument('--lambda_gan', type=float, default=0.01, help='weight for gan loss')
-        self.parser.add_argument('--lambda_vgg', type=float, default=0.1, help='weight for vgg loss')
+        self.parser.add_argument('--lambda_vgg', type=float, default=0.05, help='weight for vgg loss')
         
         self.isTrain = True

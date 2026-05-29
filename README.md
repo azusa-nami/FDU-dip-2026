@@ -144,12 +144,23 @@ python train_errnet_unaligned.py --name errnet_unaligned_ft_cpu --hyper -r --gpu
 | postcard | 20.78 | 0.8757 | 0.9233 | 0.0044 | down
 | wild | 25.76 | 0.9070 | 0.9497 | 0.0054 | up
 
+ERRNet/checkpoints/errnet_mixdata/errnet_050_00096650.pt
 divov3+data transform                    
 ceilnet_table2: LMSE: 0.0125 | NCC: 0.8818 | PSNR: 18.6178 | SSIM: 0.8318 |                  
 real20: LMSE: 0.0173 | NCC: 0.9111 | PSNR: 24.3347 | SSIM: 0.8425 |                   
 postcard: LMSE: 0.0031 | NCC: 0.9653 | PSNR: 24.7796 | SSIM: 0.9103 |                   
 objects: LMSE: 0.0029 | NCC: 0.9844 | PSNR: 25.7775 | SSIM: 0.9119 |              
 wild: LMSE: 0.0055 | NCC: 0.9500 | PSNR: 25.7647 | SSIM: 0.9069 | 
+
+
+ERRNet/checkpoints/errnet_modern/errnet_best_psnr_val.pt
+ceilnet_table2: LMSE: 0.0123 | NCC: 0.8850 | PSNR: 18.2306 | SSIM: 0.8300 |
+real20: LMSE: 0.0170 | NCC: 0.8992 | PSNR: 24.3593 | SSIM: 0.8391 |
+postcard: LMSE: 0.0032 | NCC: 0.9697 | PSNR: 25.2055 | SSIM: 0.9099 |
+objects: LMSE: 0.0027 | NCC: 0.9861 | PSNR: 26.4564 | SSIM: 0.9104 |
+wild: LMSE: 0.0056 | NCC: 0.9489 | PSNR: 25.2976 | SSIM: 0.9063 |
+25.3297
+
 
 CUDA_VISIBLE_DEVICES=0,1,2,3 uv run torchrun --nproc_per_node=4 test_errnet.py \
 --dataset all \
