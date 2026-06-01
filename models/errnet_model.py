@@ -356,21 +356,29 @@ class ERRNetModel(ERRNetBase):
         self.feature_extractor = None
         self.vgg_feature_extractor = None
         feature_layers = [int(layer) for layer in str(opt.feature_layers).split(',') if layer.strip()]
-        
+        fusion_mode = getattr(opt, 'fusion_mode', 'both')
+
         if opt.hyper:
             self.vgg_feature_extractor = losses.Vgg19(requires_grad=False).to(self.device)
             self.vgg_feature_extractor.eval()
             in_channels += 64 + 128 + 256 + 512 + 512
-            self.feature_extractor = losses.DINOv3Features(
-                model_path=opt.feature_model_path,
-                layers=feature_layers,
-                feature_scale=opt.feature_scale,
-                normalize_features=not opt.no_feature_norm,
-                requires_grad=False,
-            ).to(self.device)
-            dino_channels = self.feature_extractor.out_channels
-        
-        self.net_i = arch.__dict__[self.opt.inet](in_channels, 3, dino_channels=dino_channels).to(self.device)
+            if fusion_mode != 'none':
+                self.feature_extractor = losses.DINOv3Features(
+                    model_path=opt.feature_model_path,
+                    layers=feature_layers,
+                    feature_scale=opt.feature_scale,
+                    normalize_features=not opt.no_feature_norm,
+                    requires_grad=False,
+                ).to(self.device)
+                dino_channels = self.feature_extractor.out_channels
+
+        fusion_strided = getattr(opt, 'fusion_strided', False)
+        self.net_i = arch.__dict__[self.opt.inet](
+            in_channels, 3,
+            dino_channels=dino_channels,
+            fusion_mode=fusion_mode,
+            fusion_strided=fusion_strided,
+        ).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
         self.ema_state = None

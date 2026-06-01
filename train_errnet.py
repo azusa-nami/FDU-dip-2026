@@ -18,6 +18,10 @@ def build_train_loader(opt):
     synthetic_dir = train_root / "synthetic_voc"
     real_dir = train_root / "real89"
 
+    synth_mix_ratio = [float(x) for x in str(opt.synth_mix_ratio).split(',')]
+    if len(synth_mix_ratio) != 2:
+        synth_mix_ratio = [0.8, 0.2]
+
     synthetic = datasets.CEILDataset(
         str(synthetic_dir),
         read_fns("VOC2012_224_train_png.txt"),
@@ -28,6 +32,7 @@ def build_train_loader(opt):
         low_gamma=opt.low_gamma,
         high_gamma=opt.high_gamma,
         synthesis=opt.synthesis,
+        synth_mix_ratio=(synth_mix_ratio[0], synth_mix_ratio[1]),
     )
     real = datasets.CEILTestDataset(str(real_dir), enable_transforms=True)
     fusion = datasets.FusionDataset([synthetic, real], [0.7, 0.3])

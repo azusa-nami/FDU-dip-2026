@@ -145,17 +145,19 @@ class DINO16CrossAttentionFusion(nn.Module):
 
 
 class DRNet(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, n_feats, n_resblocks, norm=nn.BatchNorm2d, 
+    def __init__(self, in_channels, out_channels, n_feats, n_resblocks, norm=nn.BatchNorm2d,
     se_reduction=None, res_scale=1, bottom_kernel_size=3, pyramid=False,
-    dino_channels=None, fusion_heads=8, film_size=56, cross_attn_size=16,
+    dino_channels=None, fusion_mode='both', fusion_strided=False,
+    fusion_heads=8, film_size=56, cross_attn_size=16,
     film_after_blocks=4, cross_after_blocks=8):
         super(DRNet, self).__init__()
-        # Initial convolution layers
         conv = nn.Conv2d
         deconv = nn.ConvTranspose2d
         act = nn.ReLU(True)
-        self.full_res_fusion = dino_channels is not None
-        
+
+        self.fusion_mode = fusion_mode
+        self.full_res_fusion = dino_channels is not None and fusion_mode != 'none' and not fusion_strided
+
         self.pyramid_module = None
         self.conv1 = ConvLayer(conv, in_channels, n_feats, kernel_size=bottom_kernel_size, stride=1, norm=None, act=act)
         self.conv2 = ConvLayer(conv, n_feats, n_feats, kernel_size=3, stride=1, norm=norm, act=act)
@@ -163,26 +165,28 @@ class DRNet(torch.nn.Module):
             self.conv3 = ConvLayer(conv, n_feats, n_feats, kernel_size=3, stride=2, norm=norm, act=act)
         self.film_fusion = None
         self.cross_fusion = None
-        if dino_channels is not None:
-            self.film_fusion = DINOFiLMFusion(
-                n_feats,
-                dino_channels,
-                target_size=film_size,
-                hidden_channels=n_feats,
-            )
-            self.cross_fusion = DINO16CrossAttentionFusion(
-                n_feats,
-                dino_channels,
-                attn_channels=n_feats,
-                num_heads=fusion_heads,
-                target_size=cross_attn_size,
-            )
+        if dino_channels is not None and fusion_mode != 'none':
+            if fusion_mode in ('film', 'both'):
+                self.film_fusion = DINOFiLMFusion(
+                    n_feats,
+                    dino_channels,
+                    target_size=film_size,
+                    hidden_channels=n_feats,
+                )
+            if fusion_mode in ('cross', 'both'):
+                self.cross_fusion = DINO16CrossAttentionFusion(
+                    n_feats,
+                    dino_channels,
+                    attn_channels=n_feats,
+                    num_heads=fusion_heads,
+                    target_size=cross_attn_size,
+                )
 
         # Residual layers
         dilation_config = [1] * n_resblocks
 
         self.res_module = nn.Sequential(*[ResidualBlock(
-            n_feats, dilation=dilation_config[i], norm=norm, act=act, 
+            n_feats, dilation=dilation_config[i], norm=norm, act=act,
             se_reduction=se_reduction, res_scale=res_scale) for i in range(n_resblocks)])
         self.film_after_blocks = min(film_after_blocks, n_resblocks)
         self.cross_after_blocks = min(max(cross_after_blocks, self.film_after_blocks), n_resblocks)
@@ -204,7 +208,7 @@ class DRNet(torch.nn.Module):
                 bottleneck=not self.full_res_fusion,
             )
             self.deconv3 = ConvLayer(conv, self.pyramid_module.out_channels, out_channels, kernel_size=1, stride=1, norm=None, act=act)
-        
+
     def forward(self, x, dino_feature=None):
         x = self.conv1(x)
         x = self.conv2(x)
@@ -212,15 +216,23 @@ class DRNet(torch.nn.Module):
         if self.full_res_fusion:
             for block in self.res_module[:self.film_after_blocks]:
                 x = block(x)
-            x = self.film_fusion(x, dino_feature)
+            if self.film_fusion is not None:
+                x = self.film_fusion(x, dino_feature)
             for block in self.res_module[self.film_after_blocks:self.cross_after_blocks]:
                 x = block(x)
-            x = self.cross_fusion(x, dino_feature)
+            if self.cross_fusion is not None:
+                x = self.cross_fusion(x, dino_feature)
             for block in self.res_module[self.cross_after_blocks:]:
                 x = block(x)
         else:
             x = self.conv3(x)
             x = self.res_module(x)
+
+            if self.fusion_mode != 'none' and dino_feature is not None:
+                if self.film_fusion is not None:
+                    x = self.film_fusion(x, dino_feature)
+                if self.cross_fusion is not None:
+                    x = self.cross_fusion(x, dino_feature)
 
         if not self.full_res_fusion:
             x = self.deconv1(x)

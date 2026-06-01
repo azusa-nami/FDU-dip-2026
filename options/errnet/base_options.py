@@ -15,7 +15,7 @@ class BaseOptions(Base):
         self.parser.add_argument('--init_type', type=str, default='edsr', help='network initialization [normal|xavier|kaiming|orthogonal|uniform]')
         # for network
         self.parser.add_argument('--hyper', action='store_true', help='if true, fuse frozen DINOv3 features inside the CNN backbone')
-        self.parser.add_argument('--feature_model_path', type=str, default='/oldhome/zengyuqi/model/dinov3', help='local DINOv3 model directory')
+        self.parser.add_argument('--feature_model_path', type=str, default='facebook/dinov3-vitb16-pretrained-lvd-142M', help='local DINOv3 directory or HuggingFace model id')
         self.parser.add_argument('--feature_layers', type=str, default='6,12,18,24', help='DINOv3 hidden-state layers for perceptual losses')
         self.parser.add_argument('--hyper_layer', type=int, default=24, help='DINOv3 hidden-state layer fused inside the backbone')
         self.parser.add_argument('--feature_scale', type=float, default=0.1, help='scale applied to normalized DINOv3 hyper features')

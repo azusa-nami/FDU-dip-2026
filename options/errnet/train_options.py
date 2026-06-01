@@ -34,6 +34,9 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--low_gamma', type=float, default=1.3, help='max gamma in synthetic dataset')
         self.parser.add_argument('--high_gamma', type=float, default=1.3, help='max gamma in synthetic dataset')
         self.parser.add_argument('--synthesis', type=str, default='mixed', choices=['mixed', 'reflection2', 'advanced', 'legacy'], help='reflection synthesis used for synthetic training data')
+        self.parser.add_argument('--synth_mix_ratio', type=str, default='0.8,0.2', help='mixing ratio for reflection2/advanced when synthesis=mixed')
+        self.parser.add_argument('--fusion_mode', type=str, default='both', choices=['both', 'film', 'cross', 'none'], help='DINO fusion mode: both=FiLM+CrossAttn, film=FiLM only, cross=CrossAttn only, none=no DINO fusion (baseline)')
+        self.parser.add_argument('--fusion_strided', action='store_true', help='if set, keep stride-2 downsampling even when DINO fusion is enabled')
         
         # data augmentation
         self.parser.add_argument('--batchSize', '-b', type=int, default=1, help='input batch size')

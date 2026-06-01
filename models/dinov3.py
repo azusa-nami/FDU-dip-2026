@@ -1,3 +1,5 @@
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,7 +21,7 @@ class DINOv3Features(nn.Module):
         self.model = AutoModel.from_pretrained(
             model_path,
             trust_remote_code=True,
-            local_files_only=True,
+            local_files_only=os.path.isdir(model_path),
         )
         self.layers = layers or [6, 12, 18, 24]
         self.feature_scale = feature_scale

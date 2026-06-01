@@ -110,7 +110,7 @@ class DataLoader(torch.utils.data.DataLoader):
 
 
 class CEILDataset(BaseDataset):
-    def __init__(self, datadir, fns=None, size=None, enable_transforms=True, low_sigma=2, high_sigma=5, low_gamma=1.3, high_gamma=1.3, synthesis='mixed'):
+    def __init__(self, datadir, fns=None, size=None, enable_transforms=True, low_sigma=2, high_sigma=5, low_gamma=1.3, high_gamma=1.3, synthesis='mixed', synth_mix_ratio=(0.8, 0.2)):
         super(CEILDataset, self).__init__()
         self.size = size
         self.datadir = datadir
@@ -129,7 +129,7 @@ class CEILDataset(BaseDataset):
         elif synthesis == 'reflection2':
             self.syn_model = ReflectionSythesis_2()
         elif synthesis == 'mixed':
-            self.syn_model = MixedReflectionSythesis(reflection2_ratio=0.8, advanced_ratio=0.2)
+            self.syn_model = MixedReflectionSythesis(reflection2_ratio=synth_mix_ratio[0], advanced_ratio=synth_mix_ratio[1])
         else:
             raise NotImplementedError('Synthesis model [%s] is not implemented' % synthesis)
         self.reset(shuffle=False)
