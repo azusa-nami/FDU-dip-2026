@@ -370,7 +370,12 @@ class ERRNetModel(ERRNetBase):
             ).to(self.device)
             dino_channels = self.feature_extractor.out_channels
         
-        self.net_i = arch.__dict__[self.opt.inet](in_channels, 3, dino_channels=dino_channels).to(self.device)
+        self.net_i = arch.__dict__[self.opt.inet](
+            in_channels, 3,
+            dino_channels=dino_channels,
+            fusion_type=opt.fusion_type,
+            full_res=not opt.no_full_res,
+        ).to(self.device)
         networks.init_weights(self.net_i, init_type=opt.init_type) # using default initialization as EDSR
         self.edge_map = EdgeMap(scale=1).to(self.device)
         self.ema_state = None

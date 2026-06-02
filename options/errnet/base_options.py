@@ -20,7 +20,9 @@ class BaseOptions(Base):
         self.parser.add_argument('--hyper_layer', type=int, default=24, help='DINOv3 hidden-state layer fused inside the backbone')
         self.parser.add_argument('--feature_scale', type=float, default=0.1, help='scale applied to normalized DINOv3 hyper features')
         self.parser.add_argument('--no_feature_norm', action='store_true', help='disable normalization of DINOv3 hyper features before fusion')
-        
+        self.parser.add_argument('--fusion_type', type=str, default='film_cross', choices=['film_cross', 'film', 'cross_attn', 'none'], help='DINOv3 feature fusion type inside the backbone')
+        self.parser.add_argument('--no_full_res', action='store_true', help='disable full-resolution processing (use original downsampled path)')
+
         self.initialized = True
 
     def parse(self):
